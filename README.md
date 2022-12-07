@@ -17,7 +17,7 @@ More at [Particle Dev](https://www.particle.io/dev)
 - [ ] configure device via serial
   - [ ] wifi credentials
   - [ ] where to send data
-- [ ] emit device state using HTTP, skip cloud entirely
+- [x] emit device state using HTTP, skip cloud entirely
 
 ## Project structure
 
