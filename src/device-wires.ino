@@ -1,101 +1,66 @@
-int x;
+#include "State/State.h"
+#include "HttpClient/HttpClient.h"
+#define LOGGING
 
-// outputs
-int opin0 = D0;
-int opin1 = D1;
-int opin2 = D2;
-int opin3 = D3;
-int opin4 = D4;
+IPAddress address = IPAddress(192, 168, 2, 55);
+int port = 8080;
+std::string apiEndpoint = "/device/device-wires";
 
-// inputs
-int ipin0 = A0;
-int ipin1 = A1;
-int ipin2 = A2;
-int ipin3 = A3;
-int ipin4 = A4;
+HttpClient *client = new HttpClient(address, port);
+State *state = new State();
 
-int buzzerpin = A5;
+// pins
+int outputPins[] = {D0, D1, D2, D3, D4};
+int inputPins[] = {A0, A1, A2, A3, A4};
 
 // leds
 int led1 = D7;
 
 // settings
+SYSTEM_MODE(SEMI_AUTOMATIC); // Disable cloud connection
 SYSTEM_THREAD(ENABLED);
 SerialLogHandler logHandler(LOG_LEVEL_ALL);
 
-// cloud functions
-int setPuzzlerMode(String mode);
-
-// cloud variables
-String serializedState;
+// TODO: should be in State class
+std::string serializedState;
 
 // timers (max of 10)
 Timer scanTimer(100, scan);
 
 void setup()
 {
-  // outputs
-  pinMode(opin0, OUTPUT);
-  pinMode(opin1, OUTPUT);
-  pinMode(opin2, OUTPUT);
-  pinMode(opin3, OUTPUT);
-  pinMode(opin4, OUTPUT);
+  System.disable(SYSTEM_FLAG_RESET_NETWORK_ON_CLOUD_ERRORS);
 
-  // inputs
-  pinMode(ipin0, INPUT_PULLDOWN);
-  pinMode(ipin1, INPUT_PULLDOWN);
-  pinMode(ipin2, INPUT_PULLDOWN);
-  pinMode(ipin3, INPUT_PULLDOWN);
-  pinMode(ipin4, INPUT_PULLDOWN);
+  WiFi.connect();
+
+  waitFor(Serial.isConnected, 30000);
+
+  Serial.println("WiFi: setting up...");
+  waitUntil(WiFi.ready);
+
+  if (!WiFi.ready())
+  {
+    Serial.println("WiFi: not ready. No connection. Aborting.");
+    return;
+  }
+
+  // Set which pins are outputting
+  for (auto pinOut : outputPins)
+  {
+    pinMode(pinOut, OUTPUT);
+  }
+
+  // Set which pins are reading
+  for (auto pinIn : inputPins)
+  {
+    pinMode(pinIn, INPUT_PULLDOWN);
+  }
 
   // leds
   pinMode(led1, OUTPUT);
 
-  // set up cloud functions
-  Particle.function("setMode", setPuzzlerMode);
-  Particle.variable("machineState", serializedState);
-
   // start timers
   scanTimer.start();
-}
-
-const int MODE_SCANNING = 0;
-const int MODE_RESOLVED = 1;
-const int MODE_ERROR = 2;
-
-bool scanningHasStarted = false;
-
-int CURRENT_MODE = 0;
-
-int setPuzzlerMode(String mode)
-{
-  if (mode == "scanning")
-  {
-    CURRENT_MODE = MODE_SCANNING;
-    if (!scanTimer.isActive())
-    {
-      scanTimer.start();
-    }
-    return 1;
-  }
-  else if (mode == "resolved")
-  {
-    CURRENT_MODE = MODE_RESOLVED;
-    scanTimer.stop();
-    return 1;
-  }
-  else if (mode == "error")
-  {
-    CURRENT_MODE = MODE_ERROR;
-    scanTimer.stop();
-    return 1;
-  }
-  else
-  {
-    CURRENT_MODE = MODE_ERROR;
-    scanTimer.stop();
-    return -1;
-  }
 }
 
 void fastBlink()
@@ -109,7 +74,7 @@ void fastBlink()
 void slowBlink()
 {
   digitalWrite(led1, HIGH);
-  delay(5000);
+  delay(2000);
   digitalWrite(led1, LOW);
   delay(100);
 }
@@ -122,92 +87,84 @@ void pulseBlink()
   delay(1000);
 }
 
-int ipins[5] = {ipin0, ipin1, ipin2, ipin3, ipin4};
-int state[10] = {
-    opin0,
+int wireConfiguration[10] = {
+    outputPins[0],
     -1,
-    opin1,
+    outputPins[1],
     -1,
-    opin2,
+    outputPins[2],
     -1,
-    opin3,
+    outputPins[3],
     -1,
-    opin4,
+    outputPins[4],
     -1,
 };
 
-// automatically store to global variable which gets
-// published to cloud, also automatically
-void serializeState()
-{
-  String serialized = String("");
-
-  for (int oi = 0; oi < 10; oi += 2)
-  {
-    serialized.concat(String(oi / 2));
-    serialized.concat(String(state[oi + 1]));
-  }
-
-  serializedState = serialized;
-}
-
 void scan()
 {
+#ifdef LOGGING
+  Serial.printlnf("free memory %lu", System.freeMemory());
   Log.info("--- scan start");
-
-  scanningHasStarted = true;
+#endif
 
   for (int oi = 0; oi < 10; oi += 2)
   {
-    digitalWrite(state[oi], HIGH);
+    digitalWriteFast(wireConfiguration[oi], HIGH);
 
     // reset previous values
-    state[oi + 1] = -1;
+    wireConfiguration[oi + 1] = -1;
 
     // loop all input pins to chech which output-input-pairs
     // are wired together
     for (int ii = 0; ii < 5; ii++)
     {
-      if (digitalRead(ipins[ii]) > 0)
+      if (digitalRead(inputPins[ii]) > 0)
       {
-        state[oi + 1] = ii;
+        wireConfiguration[oi + 1] = ii;
       }
     }
 
-    digitalWrite(state[oi], LOW);
-    // Log.info("opin: %d, ipin: %d", oi/2, state[oi+1]);
+    digitalWriteFast(wireConfiguration[oi], LOW);
   }
 
-  serializeState();
-  // for (int oi = 0; oi < 10; oi += 2) {
-  //     Log.info("opin: %d, ipin: %d", oi/2, state[oi+1]);
-  // }
-}
+  if (!WiFi.ready())
+  {
+    Serial.println("WiFi: not ready. No connection. Aborting.");
+    delay(200);
+    return;
+  }
 
-int notes[] = {239, 239, 213};
+  serializedState = state->serializeState(wireConfiguration);
+  delay(200);
+}
 
 void loop()
 {
-  switch (CURRENT_MODE)
+  if (!WiFi.ready())
   {
-  case MODE_SCANNING:
-    // if (scanningHasStarted) {
-    //     for (int i = 0; i < sizeof(notes); i++) {
-    //         tone(buzzerpin, notes[i], 100);
-    //         delay(200);
-    //     }
-    //     scanningHasStarted = false;
-    // }
-
-    slowBlink();
-    break;
-  case MODE_RESOLVED:
-    pulseBlink();
-    break;
-  case MODE_ERROR:
     fastBlink();
-    break;
-  default:
-    fastBlink();
+    return;
   }
+
+  if (!client->isSending())
+  {
+
+    // TODO: compare with previous state, not only length
+    if (serializedState.length() == 0)
+    {
+      slowBlink();
+      return;
+    }
+
+    if (client->post(apiEndpoint, serializedState))
+    {
+      Serial.println("POST: success");
+    }
+    else
+    {
+      Serial.println("POST: failed");
+    }
+  }
+
+  pulseBlink();
 }
